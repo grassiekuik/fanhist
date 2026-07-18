@@ -462,8 +462,6 @@ def curve_percent_for_temp(curve, temp):
 # --------------------------------------------------------------------------
 
 def control_loop():
-    manual_mode_key = None  # (host, user, pass) that manual mode was last set for
-
     while True:
         settings = db_get_settings()
         interval = settings["interval_seconds"] or 30
@@ -476,20 +474,6 @@ def control_loop():
                 )
             time.sleep(interval)
             continue
-
-        idrac_key = (settings["idrac_host"], settings["idrac_user"], settings["idrac_pass"])
-        if idrac_key != manual_mode_key:
-            try:
-                ipmi_set_manual_mode(settings)
-                manual_mode_key = idrac_key
-            except Exception as exc:
-                with _lock:
-                    _state.update(
-                        last_error=f"Failed to set manual fan mode: {exc}",
-                        last_update=datetime.utcnow().isoformat(),
-                    )
-                time.sleep(interval)
-                continue
 
         cpu_temp = None
         disk_temps = []
@@ -518,6 +502,11 @@ def control_loop():
             curve = db_get_curve()
             fan_percent = curve_percent_for_temp(curve, effective_temp)
             try:
+                # Re-assert manual mode every cycle, not just once. If anything
+                # external (another tool, a BMC reset, iDRAC watchdog) flips
+                # the fan controller back to automatic, this recovers on the
+                # next cycle instead of silently sending ignored commands.
+                ipmi_set_manual_mode(settings)
                 ipmi_set_fan_percent(settings, fan_percent)
             except Exception as exc:
                 error = (error + " | " if error else "") + f"Fan set failed: {exc}"
