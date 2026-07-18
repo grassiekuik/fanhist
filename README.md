@@ -31,7 +31,7 @@ externe temperatuur-alert (bijv. in Home Assistant of Grafana) als extra vangnet
    docker compose up -d --build
    ```
 
-5. Open `http://<host>:8081` voor het dashboard.
+5. Open `http://<host>:8181` voor het dashboard.
 
 ## Configuratie (environment variabelen)
 

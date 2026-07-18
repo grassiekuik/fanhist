@@ -7,7 +7,7 @@ services:
     container_name: fanhist
     restart: unless-stopped
     ports:
-      - "8081:8081"
+      - "8181:8081"
     environment:
       - IDRAC_HOST=192.168.50.11
       - IDRAC_USER=root
