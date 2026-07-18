@@ -222,7 +222,9 @@ function renderCpuSensorChecklist() {
     label.className = 'sensor-check';
     const checked = selectedCpuSensors.includes(s.name) ? 'checked' : '';
     const readingText = s.reading != null ? ` — ${s.reading}°C` : '';
-    label.innerHTML = `<input type="checkbox" value="${s.name}" ${checked}>${s.name}${readingText}`;
+    const instanceText = s.instance != null ? ` #${s.instance}` : '';
+    const critText = s.upper_crit != null ? ` (crit ${s.upper_crit}°C)` : '';
+    label.innerHTML = `<input type="checkbox" value="${s.name}" ${checked}>${s.name}${instanceText}${readingText}${critText}`;
     container.appendChild(label);
   });
 }

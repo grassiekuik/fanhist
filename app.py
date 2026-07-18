@@ -277,7 +277,27 @@ def ipmi_list_sensors(settings):
             reading = float(reading_str)
         except ValueError:
             reading = None
-        sensors.append({"name": name, "reading": reading, "unit": unit})
+        upper_crit = None
+        if len(parts) > 8:
+            try:
+                upper_crit = float(parts[8])
+            except ValueError:
+                pass
+        sensors.append({"name": name, "reading": reading, "unit": unit, "upper_crit": upper_crit})
+
+    # Some boards (e.g. older Dell platforms) expose multiple sensors under the
+    # exact same name (often just "Temp") with no more specific label available.
+    # Number them so the UI can tell them apart even though ipmitool can't.
+    name_counts = {}
+    for s in sensors:
+        name_counts[s["name"]] = name_counts.get(s["name"], 0) + 1
+    seen = {}
+    for s in sensors:
+        if name_counts[s["name"]] > 1:
+            seen[s["name"]] = seen.get(s["name"], 0) + 1
+            s["instance"] = seen[s["name"]]
+        else:
+            s["instance"] = None
     return sensors
 
 
