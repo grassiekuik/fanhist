@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<title>fanhist</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root { --bg: #14161a; --panel: #1e2127; --accent: #e8562f; --text: #eee; --muted: #999; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, Segoe UI, sans-serif; margin: 0; padding: 24px; }
+  h1 { color: var(--accent); font-weight: 700; letter-spacing: 0.5px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 24px; }
+  .card { background: var(--panel); border-radius: 10px; padding: 16px 20px; }
+  .card .label { color: var(--muted); font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.5px; }
+  .card .value { font-size: 2em; font-weight: 600; margin-top: 4px; }
+  .panel { background: var(--panel); border-radius: 10px; padding: 20px; margin-bottom: 24px; }
+  select, button, input { background: #2a2e36; color: var(--text); border: 1px solid #3a3f4a; border-radius: 6px; padding: 6px 10px; }
+  button { background: var(--accent); border: none; cursor: pointer; font-weight: 600; }
+  button:hover { opacity: 0.9; }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #2a2e36; }
+  .error { color: #ff6b6b; margin-top: 10px; }
+  canvas { max-height: 320px; }
+</style>
+</head>
+<body>
+  <h1>fanhist</h1>
+
+  <div class="grid">
+    <div class="card"><div class="label">CPU / Inlet</div><div class="value" id="cpuTemp">–</div></div>
+    <div class="card"><div class="label">Disk (<span id="diskCount">0</span> schijven, gem.)</div><div class="value" id="diskTemp">–</div></div>
+    <div class="card"><div class="label">Effectief</div><div class="value" id="effTemp">–</div></div>
+    <div class="card"><div class="label">Fan speed</div><div class="value" id="fanPct">–</div></div>
+  </div>
+  <div class="error" id="errorBox"></div>
+
+  <div class="panel">
+    <h2>Geschiedenis</h2>
+    <select id="rangeSelect">
+      <option value="6">6 uur</option>
+      <option value="24" selected>24 uur</option>
+      <option value="168">7 dagen</option>
+    </select>
+    <canvas id="historyChart"></canvas>
+  </div>
+
+  <div class="panel">
+    <h2>Fan curve</h2>
+    <table id="curveTable"></table>
+    <button onclick="addPoint()">+ Punt toevoegen</button>
+    <button onclick="saveCurve()">Opslaan</button>
+  </div>
+
+<script>
+let curve = [];
+
+async function refreshStatus() {
+  const r = await fetch('/api/status');
+  const s = await r.json();
+  document.getElementById('cpuTemp').textContent = s.cpu_temp != null ? s.cpu_temp.toFixed(1) + '°C' : '–';
+  document.getElementById('diskTemp').textContent = s.disk_temp != null ? s.disk_temp.toFixed(1) + '°C' : '–';
+  document.getElementById('diskCount').textContent = s.disk_count || 0;
+  document.getElementById('effTemp').textContent = s.effective_temp != null ? s.effective_temp.toFixed(1) + '°C' : '–';
+  document.getElementById('fanPct').textContent = s.fan_percent != null ? Math.round(s.fan_percent) + '%' : '–';
+  document.getElementById('errorBox').textContent = s.last_error || '';
+}
+
+let chart;
+async function refreshHistory() {
+  const hours = document.getElementById('rangeSelect').value;
+  const r = await fetch('/api/history?hours=' + hours);
+  const data = await r.json();
+  const labels = data.map(d => new Date(d.ts + 'Z').toLocaleTimeString());
+  const eff = data.map(d => d.effective_temp);
+  const fan = data.map(d => d.fan_percent);
+
+  if (chart) chart.destroy();
+  const ctx = document.getElementById('historyChart').getContext('2d');
+  chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Temp (°C)', data: eff, borderColor: '#e8562f', yAxisID: 'y', tension: 0.2, pointRadius: 0 },
+        { label: 'Fan (%)', data: fan, borderColor: '#4da3ff', yAxisID: 'y1', tension: 0.2, pointRadius: 0 },
+      ],
+    },
+    options: {
+      scales: {
+        y: { position: 'left', title: { display: true, text: '°C' } },
+        y1: { position: 'right', title: { display: true, text: '%' }, grid: { drawOnChartArea: false } },
+      },
+    },
+  });
+}
+
+function renderCurveTable() {
+  const table = document.getElementById('curveTable');
+  table.innerHTML = '<tr><th>Temp (°C)</th><th>Fan (%)</th><th></th></tr>';
+  curve.forEach((p, i) => {
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td><input type="number" value="${p.temp}" onchange="curve[${i}].temp = parseFloat(this.value)"></td>
+      <td><input type="number" value="${p.percent}" onchange="curve[${i}].percent = parseFloat(this.value)"></td>
+      <td><button onclick="removePoint(${i})">x</button></td>`;
+    table.appendChild(row);
+  });
+}
+
+function addPoint() {
+  curve.push({ temp: 50, percent: 30 });
+  renderCurveTable();
+}
+
+function removePoint(i) {
+  curve.splice(i, 1);
+  renderCurveTable();
+}
+
+async function saveCurve() {
+  await fetch('/api/curve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(curve),
+  });
+}
+
+async function loadCurve() {
+  const r = await fetch('/api/curve');
+  curve = await r.json();
+  renderCurveTable();
+}
+
+document.getElementById('rangeSelect').addEventListener('change', refreshHistory);
+
+loadCurve();
+refreshStatus();
+refreshHistory();
+setInterval(refreshStatus, 5000);
+setInterval(refreshHistory, 60000);
+</script>
+</body>
+</html>

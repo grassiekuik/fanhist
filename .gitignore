@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Runtime data — never commit your own history/db
+data/
+*.db
+
+# SSH keys — never commit private keys
+ssh/
+*.pem
+id_rsa*
+id_ed25519*
+
+# Local env overrides
+.env
+
+# OS / editor cruft
+.DS_Store
+.vscode/
