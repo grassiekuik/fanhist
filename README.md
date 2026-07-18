@@ -80,8 +80,29 @@ percentage applies, above the highest point the highest percentage applies.
 ## Known limitations (v1)
 
 - No authentication on the dashboard — don't expose it to the public internet.
-- One iDRAC per container; run multiple instances for multiple hosts.
+- One iDRAC per container; run multiple instances for multiple hosts (see below).
 - `DISK_TEMP_CMD` assumes Linux-hwmon-like output; adjust for other OSes.
+
+### Multiple servers
+
+Run a second (third, ...) instance rather than pointing one instance at multiple iDRACs —
+each container is fully independent with its own settings, curve, and history. Copy
+`docker-compose.yml` and change three things so it doesn't collide with the first instance:
+
+```yaml
+services:
+  fanhist-server2:            # different service/container name
+    image: ghcr.io/grassiekuik/fanhist:latest
+    container_name: fanhist-server2
+    restart: unless-stopped
+    ports:
+      - "8182:8081"            # different host port
+    volumes:
+      - ./data-server2:/data   # different data folder (its own DB + SSH key)
+```
+
+Then configure that instance's iDRAC/sensors from its own dashboard at
+`http://<host>:8182`, same as the first one.
 
 ## License
 
