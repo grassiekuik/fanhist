@@ -70,10 +70,15 @@
       <label>Host/IP<input id="set_idrac_host" type="text" placeholder="192.168.50.11"></label>
       <label>User<input id="set_idrac_user" type="text" placeholder="root"></label>
       <label>Password<input id="set_idrac_pass" type="password"></label>
-      <label>Sensor name<input id="set_cpu_sensor_name" type="text" placeholder="Inlet Temp"></label>
+      <label>Sensor name
+        <input id="set_cpu_sensor_name" type="text" list="sensorOptions" placeholder="Inlet Temp">
+        <datalist id="sensorOptions"></datalist>
+      </label>
     </div>
     <button onclick="testIdrac()">Test connection</button>
+    <button onclick="listSensors()">List sensors</button>
     <span id="idracTestResult" class="test-result"></span>
+    <div id="sensorListResult" class="test-result"></div>
 
     <h3>Disk temperature (optional, via SSH)</h3>
     <div class="field-row">
@@ -254,6 +259,29 @@ async function testIdrac() {
   const res = await r.json();
   el.textContent = res.message;
   el.className = 'test-result ' + (res.ok ? 'ok' : 'fail');
+}
+
+async function listSensors() {
+  const el = document.getElementById('sensorListResult');
+  el.textContent = 'Querying sensors...';
+  el.className = 'test-result';
+  const r = await fetch('/api/sensors/idrac', { method: 'POST' });
+  const res = await r.json();
+  if (res.ok) {
+    const datalist = document.getElementById('sensorOptions');
+    datalist.innerHTML = '';
+    res.sensors.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s.name;
+      opt.textContent = s.reading != null ? `${s.name} — ${s.reading}°C` : s.name;
+      datalist.appendChild(opt);
+    });
+    el.textContent = `Found ${res.sensors.length} temperature sensor(s) — pick one from the Sensor name field`;
+    el.className = 'test-result ok';
+  } else {
+    el.textContent = res.message;
+    el.className = 'test-result fail';
+  }
 }
 
 async function testDisk() {

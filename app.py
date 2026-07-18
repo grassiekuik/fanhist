@@ -219,6 +219,29 @@ def ipmi_read_cpu_temp(settings):
     return float(match.group())
 
 
+def ipmi_list_sensors(settings):
+    """List temperature sensors via `ipmitool sensor list`, for the Settings UI dropdown."""
+    cmd = _ipmi_base_cmd(settings) + ["sensor", "list"]
+    out = subprocess.run(cmd, capture_output=True, text=True, timeout=settings["ipmi_timeout"])
+    if out.returncode != 0:
+        raise RuntimeError(f"ipmitool sensor list failed: {out.stderr.strip()}")
+
+    sensors = []
+    for line in out.stdout.splitlines():
+        parts = [p.strip() for p in line.split("|")]
+        if len(parts) < 3:
+            continue
+        name, reading_str, unit = parts[0], parts[1], parts[2]
+        if not name or "degree" not in unit.lower():
+            continue
+        try:
+            reading = float(reading_str)
+        except ValueError:
+            reading = None
+        sensors.append({"name": name, "reading": reading, "unit": unit})
+    return sensors
+
+
 def ipmi_set_manual_mode(settings):
     cmd = _ipmi_base_cmd(settings) + ["raw", "0x30", "0x30", "0x01", "0x00"]
     subprocess.run(cmd, capture_output=True, text=True, timeout=settings["ipmi_timeout"], check=True)
@@ -472,6 +495,20 @@ def api_ssh_key_generate():
     except subprocess.CalledProcessError as exc:
         return jsonify({"error": f"key generation failed: {exc.stderr}"}), 500
     return jsonify({"public_key": pub})
+
+
+@app.route("/api/sensors/idrac", methods=["POST"])
+def api_sensors_idrac():
+    settings = db_get_settings()
+    if not settings["idrac_host"] or not settings["idrac_pass"]:
+        return jsonify({"ok": False, "message": "Fill in iDRAC host and password first"})
+    try:
+        sensors = ipmi_list_sensors(settings)
+        if not sensors:
+            return jsonify({"ok": False, "message": "No temperature sensors found"})
+        return jsonify({"ok": True, "sensors": sensors})
+    except Exception as exc:
+        return jsonify({"ok": False, "message": str(exc)})
 
 
 @app.route("/api/test/idrac", methods=["POST"])
