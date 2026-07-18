@@ -227,13 +227,25 @@ def _ipmi_base_cmd(settings):
     ]
 
 
+def _run(cmd, timeout, check=False):
+    """subprocess.run wrapper that never lets the raw argv (which may contain
+    the iDRAC password via -P) leak into an exception's string form — both
+    TimeoutExpired and CalledProcessError include the full command by default."""
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=check)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"command timed out after {timeout}s")
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(f"command failed: {(exc.stderr or '').strip()}")
+
+
 def ipmi_read_cpu_temps(settings):
     """Read one or more named sensors via ipmitool. Raises on failure/timeout."""
     names = settings["cpu_sensor_names"]
     if not names:
         return []
     cmd = _ipmi_base_cmd(settings) + ["sensor", "reading"] + names
-    out = subprocess.run(cmd, capture_output=True, text=True, timeout=settings["ipmi_timeout"])
+    out = _run(cmd, settings["ipmi_timeout"])
     if out.returncode != 0:
         raise RuntimeError(f"ipmitool sensor reading failed: {out.stderr.strip()}")
     temps = []
@@ -249,7 +261,7 @@ def ipmi_read_cpu_temps(settings):
 def ipmi_list_sensors(settings):
     """List temperature sensors via `ipmitool sensor list`, for the Settings UI dropdown."""
     cmd = _ipmi_base_cmd(settings) + ["sensor", "list"]
-    out = subprocess.run(cmd, capture_output=True, text=True, timeout=settings["ipmi_timeout"])
+    out = _run(cmd, settings["ipmi_timeout"])
     if out.returncode != 0:
         raise RuntimeError(f"ipmitool sensor list failed: {out.stderr.strip()}")
 
@@ -271,14 +283,14 @@ def ipmi_list_sensors(settings):
 
 def ipmi_set_manual_mode(settings):
     cmd = _ipmi_base_cmd(settings) + ["raw", "0x30", "0x30", "0x01", "0x00"]
-    subprocess.run(cmd, capture_output=True, text=True, timeout=settings["ipmi_timeout"], check=True)
+    _run(cmd, settings["ipmi_timeout"], check=True)
 
 
 def ipmi_set_fan_percent(settings, percent):
     percent = max(0, min(100, int(round(percent))))
     hex_val = f"0x{percent:02x}"
     cmd = _ipmi_base_cmd(settings) + ["raw", "0x30", "0x30", "0x02", "0xff", hex_val]
-    subprocess.run(cmd, capture_output=True, text=True, timeout=settings["ipmi_timeout"], check=True)
+    _run(cmd, settings["ipmi_timeout"], check=True)
 
 
 def read_disk_temps(settings):
@@ -294,7 +306,7 @@ def read_disk_temps(settings):
         "-i", SSH_KEY_PATH, f"{settings['disk_ssh_user']}@{settings['disk_ssh_host']}",
         settings["disk_temp_cmd"],
     ]
-    out = subprocess.run(cmd, capture_output=True, text=True, timeout=settings["ipmi_timeout"])
+    out = _run(cmd, settings["ipmi_timeout"])
     if out.returncode != 0 or not out.stdout.strip():
         raise RuntimeError(f"disk temp SSH command failed: {out.stderr.strip()}")
 
