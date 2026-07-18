@@ -71,14 +71,12 @@
       <label>User<input id="set_idrac_user" type="text" placeholder="root"></label>
       <label>Password<input id="set_idrac_pass" type="password"></label>
       <label>Sensor name
-        <input id="set_cpu_sensor_name" type="text" list="sensorOptions" placeholder="Inlet Temp">
+        <input id="set_cpu_sensor_name" type="text" list="sensorOptions" placeholder="click Test connection to list options">
         <datalist id="sensorOptions"></datalist>
       </label>
     </div>
     <button onclick="testIdrac()">Test connection</button>
-    <button onclick="listSensors()">List sensors</button>
     <span id="idracTestResult" class="test-result"></span>
-    <div id="sensorListResult" class="test-result"></div>
 
     <h3>Disk temperature (optional, via SSH)</h3>
     <div class="field-row">
@@ -273,21 +271,7 @@ function diskFormOverrides() {
 
 async function testIdrac() {
   const el = document.getElementById('idracTestResult');
-  el.textContent = 'Testing...';
-  el.className = 'test-result';
-  const r = await fetch('/api/test/idrac', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(idracFormOverrides()),
-  });
-  const res = await r.json();
-  el.textContent = res.message;
-  el.className = 'test-result ' + (res.ok ? 'ok' : 'fail');
-}
-
-async function listSensors() {
-  const el = document.getElementById('sensorListResult');
-  el.textContent = 'Querying sensors...';
+  el.textContent = 'Testing connection...';
   el.className = 'test-result';
   const r = await fetch('/api/sensors/idrac', {
     method: 'POST',
@@ -304,7 +288,7 @@ async function listSensors() {
       opt.textContent = s.reading != null ? `${s.name} — ${s.reading}°C` : s.name;
       datalist.appendChild(opt);
     });
-    el.textContent = `Found ${res.sensors.length} temperature sensor(s) — pick one from the Sensor name field`;
+    el.textContent = `Connected — found ${res.sensors.length} temperature sensor(s), pick one in Sensor name`;
     el.className = 'test-result ok';
   } else {
     el.textContent = res.message;

@@ -45,7 +45,7 @@ SETTINGS_DEFAULTS = {
     "idrac_host": os.environ.get("IDRAC_HOST", ""),
     "idrac_user": os.environ.get("IDRAC_USER", "root"),
     "idrac_pass": os.environ.get("IDRAC_PASS", ""),
-    "cpu_sensor_name": os.environ.get("CPU_SENSOR_NAME", "Inlet Temp"),
+    "cpu_sensor_name": os.environ.get("CPU_SENSOR_NAME", ""),
     "disk_ssh_host": os.environ.get("DISK_SSH_HOST", ""),
     "disk_ssh_user": os.environ.get("DISK_SSH_USER", "root"),
     "disk_temp_cmd": os.environ.get("DISK_TEMP_CMD", DEFAULT_DISK_TEMP_CMD),
@@ -400,10 +400,13 @@ def control_loop():
         disk_temps = []
         disk_temp = None
         error = None
-        try:
-            cpu_temp = ipmi_read_cpu_temp(settings)
-        except Exception as exc:
-            error = f"CPU temp read failed: {exc}"
+        if settings["cpu_sensor_name"]:
+            try:
+                cpu_temp = ipmi_read_cpu_temp(settings)
+            except Exception as exc:
+                error = f"CPU temp read failed: {exc}"
+        else:
+            error = "CPU sensor not selected yet — pick one in Settings"
 
         try:
             disk_temps = read_disk_temps(settings)
@@ -525,18 +528,6 @@ def api_sensors_idrac():
         if not sensors:
             return jsonify({"ok": False, "message": "No temperature sensors found"})
         return jsonify({"ok": True, "sensors": sensors})
-    except Exception as exc:
-        return jsonify({"ok": False, "message": str(exc)})
-
-
-@app.route("/api/test/idrac", methods=["POST"])
-def api_test_idrac():
-    settings = settings_with_overrides(request.get_json(silent=True))
-    if not settings["idrac_host"] or not settings["idrac_pass"]:
-        return jsonify({"ok": False, "message": "Fill in iDRAC host and password first"})
-    try:
-        temp = ipmi_read_cpu_temp(settings)
-        return jsonify({"ok": True, "message": f"{settings['cpu_sensor_name']}: {temp:.1f}°C"})
     except Exception as exc:
         return jsonify({"ok": False, "message": str(exc)})
 
