@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>fanhist</title>
 <script>
   // Applied before first paint so switching themes doesn't flash the wrong one.
@@ -42,8 +43,10 @@
   select, button, input { background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; }
   button { background: var(--accent); color: #fff; border: none; cursor: pointer; font-weight: 600; }
   button:hover { opacity: 0.9; }
-  table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+  table { width: 100%; table-layout: fixed; border-collapse: collapse; margin-top: 12px; }
   th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  td:last-child, th:last-child { width: 36px; }
+  td input { width: 100%; box-sizing: border-box; }
   .error { color: var(--fail); margin-top: 10px; }
   canvas { max-height: 320px; }
   h3 { margin: 20px 0 8px; font-size: 1em; color: var(--text); border-bottom: 1px solid var(--border); padding-bottom: 6px; }
