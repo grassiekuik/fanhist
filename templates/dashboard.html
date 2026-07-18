@@ -32,9 +32,11 @@
   .test-result.fail { color: #ff6b6b; }
   .ssh-key-box { background: #171a1f; border-radius: 8px; padding: 12px 14px; margin: 12px 0; }
   .muted { color: var(--muted); font-size: 0.9em; }
-  .sensor-checklist { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 12px 0; }
+  .sensor-checklist { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 4px 0 12px; }
   .sensor-check { display: flex; align-items: center; gap: 6px; font-size: 0.9em; color: var(--text); cursor: pointer; }
   .sensor-check input { margin: 0; }
+  .sensor-group-heading { color: var(--muted); font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.5px; margin: 10px 0 2px; }
+  .sensor-group-heading:first-child { margin-top: 0; }
 </style>
 </head>
 <body>
@@ -76,7 +78,7 @@
     </div>
     <button onclick="testIdrac()">Test connection</button>
     <span id="idracTestResult" class="test-result"></span>
-    <div id="cpuSensorList" class="sensor-checklist"></div>
+    <div id="cpuSensorList"></div>
     <label class="block" style="max-width: 240px">CPU sensors combine
       <select id="set_cpu_temp_aggregation">
         <option value="max">max (safest)</option>
@@ -210,6 +212,16 @@ async function loadCurve() {
 let cpuSensors = [];
 let selectedCpuSensors = [];
 
+const SENSOR_CATEGORY_ORDER = ['Inlet / Ambient', 'Exhaust', 'CPU', 'Other'];
+
+function sensorCategory(name) {
+  const n = name.toLowerCase();
+  if (n.includes('inlet') || n.includes('ambient')) return 'Inlet / Ambient';
+  if (n.includes('exhaust')) return 'Exhaust';
+  if (n.includes('cpu')) return 'CPU';
+  return 'Other';
+}
+
 function renderCpuSensorChecklist() {
   const container = document.getElementById('cpuSensorList');
   if (cpuSensors.length === 0) {
@@ -217,15 +229,35 @@ function renderCpuSensorChecklist() {
     return;
   }
   container.innerHTML = '';
+
+  const groups = {};
   cpuSensors.forEach(s => {
-    const label = document.createElement('label');
-    label.className = 'sensor-check';
-    const checked = selectedCpuSensors.includes(s.name) ? 'checked' : '';
-    const readingText = s.reading != null ? ` — ${s.reading}°C` : '';
-    const instanceText = s.instance != null ? ` #${s.instance}` : '';
-    const critText = s.upper_crit != null ? ` (crit ${s.upper_crit}°C)` : '';
-    label.innerHTML = `<input type="checkbox" value="${s.name}" ${checked}>${s.name}${instanceText}${readingText}${critText}`;
-    container.appendChild(label);
+    const cat = sensorCategory(s.name);
+    (groups[cat] = groups[cat] || []).push(s);
+  });
+
+  SENSOR_CATEGORY_ORDER.forEach(cat => {
+    const list = groups[cat];
+    if (!list || list.length === 0) return;
+
+    const heading = document.createElement('div');
+    heading.className = 'sensor-group-heading';
+    heading.textContent = cat;
+    container.appendChild(heading);
+
+    const row = document.createElement('div');
+    row.className = 'sensor-checklist';
+    list.forEach(s => {
+      const label = document.createElement('label');
+      label.className = 'sensor-check';
+      const checked = selectedCpuSensors.includes(s.name) ? 'checked' : '';
+      const readingText = s.reading != null ? ` — ${s.reading}°C` : '';
+      const instanceText = s.instance != null ? ` #${s.instance}` : '';
+      const critText = s.upper_crit != null ? ` (crit ${s.upper_crit}°C)` : '';
+      label.innerHTML = `<input type="checkbox" value="${s.name}" ${checked}>${s.name}${instanceText}${readingText}${critText}`;
+      row.appendChild(label);
+    });
+    container.appendChild(row);
   });
 }
 
