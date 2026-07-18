@@ -251,11 +251,35 @@ async function saveSettings() {
   setTimeout(() => { msg.textContent = ''; }, 4000);
 }
 
+function idracFormOverrides() {
+  const overrides = {
+    idrac_host: document.getElementById('set_idrac_host').value.trim(),
+    idrac_user: document.getElementById('set_idrac_user').value.trim(),
+    cpu_sensor_name: document.getElementById('set_cpu_sensor_name').value.trim(),
+  };
+  const passVal = document.getElementById('set_idrac_pass').value;
+  if (passVal) overrides.idrac_pass = passVal;
+  return overrides;
+}
+
+function diskFormOverrides() {
+  return {
+    disk_ssh_host: document.getElementById('set_disk_ssh_host').value.trim(),
+    disk_ssh_user: document.getElementById('set_disk_ssh_user').value.trim(),
+    disk_temp_aggregation: document.getElementById('set_disk_temp_aggregation').value,
+    disk_temp_cmd: document.getElementById('set_disk_temp_cmd').value,
+  };
+}
+
 async function testIdrac() {
   const el = document.getElementById('idracTestResult');
   el.textContent = 'Testing...';
   el.className = 'test-result';
-  const r = await fetch('/api/test/idrac', { method: 'POST' });
+  const r = await fetch('/api/test/idrac', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(idracFormOverrides()),
+  });
   const res = await r.json();
   el.textContent = res.message;
   el.className = 'test-result ' + (res.ok ? 'ok' : 'fail');
@@ -265,7 +289,11 @@ async function listSensors() {
   const el = document.getElementById('sensorListResult');
   el.textContent = 'Querying sensors...';
   el.className = 'test-result';
-  const r = await fetch('/api/sensors/idrac', { method: 'POST' });
+  const r = await fetch('/api/sensors/idrac', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(idracFormOverrides()),
+  });
   const res = await r.json();
   if (res.ok) {
     const datalist = document.getElementById('sensorOptions');
@@ -288,7 +316,11 @@ async function testDisk() {
   const el = document.getElementById('diskTestResult');
   el.textContent = 'Testing...';
   el.className = 'test-result';
-  const r = await fetch('/api/test/disk', { method: 'POST' });
+  const r = await fetch('/api/test/disk', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(diskFormOverrides()),
+  });
   const res = await r.json();
   el.textContent = res.message;
   el.className = 'test-result ' + (res.ok ? 'ok' : 'fail');

@@ -196,6 +196,24 @@ def settings_public(settings):
     return out
 
 
+def settings_with_overrides(overrides):
+    """Saved settings with unsaved form values layered on top, for the Test/List
+    buttons — so they check what's currently typed, not just what was last saved."""
+    settings = db_get_settings()
+    for key, value in (overrides or {}).items():
+        if key not in SETTINGS_DEFAULTS:
+            continue
+        if key in SECRET_FIELDS and value in ("", None, "__SET__"):
+            continue
+        if key in SETTINGS_FIELD_TYPES:
+            try:
+                value = SETTINGS_FIELD_TYPES[key](value)
+            except (TypeError, ValueError):
+                continue
+        settings[key] = value
+    return settings
+
+
 # --------------------------------------------------------------------------
 # IPMI helpers
 # --------------------------------------------------------------------------
@@ -499,7 +517,7 @@ def api_ssh_key_generate():
 
 @app.route("/api/sensors/idrac", methods=["POST"])
 def api_sensors_idrac():
-    settings = db_get_settings()
+    settings = settings_with_overrides(request.get_json(silent=True))
     if not settings["idrac_host"] or not settings["idrac_pass"]:
         return jsonify({"ok": False, "message": "Fill in iDRAC host and password first"})
     try:
@@ -513,7 +531,7 @@ def api_sensors_idrac():
 
 @app.route("/api/test/idrac", methods=["POST"])
 def api_test_idrac():
-    settings = db_get_settings()
+    settings = settings_with_overrides(request.get_json(silent=True))
     if not settings["idrac_host"] or not settings["idrac_pass"]:
         return jsonify({"ok": False, "message": "Fill in iDRAC host and password first"})
     try:
@@ -525,7 +543,7 @@ def api_test_idrac():
 
 @app.route("/api/test/disk", methods=["POST"])
 def api_test_disk():
-    settings = db_get_settings()
+    settings = settings_with_overrides(request.get_json(silent=True))
     if not settings["disk_ssh_host"]:
         return jsonify({"ok": False, "message": "Fill in disk SSH host first"})
     try:
