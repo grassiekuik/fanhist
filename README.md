@@ -61,10 +61,11 @@ or restarts needed:
 - **iDRAC**: host/IP, user, password, and one or more temperature sensors (discovered
   via "Test connection" — pick multiple if you want, e.g. Inlet + Exhaust, and how
   they're combined: average/max/min)
-- **Disk temperature (optional)**: SSH host, SSH user, how multiple disks are combined
-  (average/max/min), and the command that reads out the temperatures. The SSH key is
-  generated inside the container via the "Generate key" button — nothing needs to be
-  copied into the container by hand.
+- **Disk temperature (optional)**: SSH host, SSH user, which disk(s) to use (discovered
+  via "Test disk connection" — pick a subset if you want to exclude a boot drive, etc.),
+  how they're combined (average/max/min), and the command that reads out the
+  temperatures. The SSH key is generated inside the container via the "Generate key"
+  button — nothing needs to be copied into the container by hand.
 - **General**: measurement interval, IPMI timeout, how long history is kept
 
 Only `DB_PATH` (where the SQLite database lives) is still an environment variable, in case

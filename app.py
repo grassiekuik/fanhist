@@ -38,7 +38,11 @@ SSH_KEY_PATH = os.path.join(SSH_KEY_DIR, "id_ed25519")
 
 DEFAULT_DISK_TEMP_CMD = (
     "for f in /sys/class/hwmon/hwmon*/name; do "
-    "  grep -qx drivetemp \"$f\" 2>/dev/null && cat \"$(dirname \"$f\")\"/temp1_input; "
+    "  d=$(dirname \"$f\"); "
+    "  grep -qx drivetemp \"$f\" 2>/dev/null || continue; "
+    "  dev=$(ls \"$d\"/device/block 2>/dev/null | head -n1); "
+    "  [ -z \"$dev\" ] && dev=$(basename \"$d\"); "
+    "  echo \"$dev:$(cat \"$d\"/temp1_input)\"; "
     "done"
 )
 
@@ -52,6 +56,7 @@ SETTINGS_DEFAULTS = {
     "disk_ssh_user": os.environ.get("DISK_SSH_USER", "root"),
     "disk_temp_cmd": os.environ.get("DISK_TEMP_CMD", DEFAULT_DISK_TEMP_CMD),
     "disk_temp_aggregation": os.environ.get("DISK_TEMP_AGGREGATION", "avg"),
+    "disk_names": [],  # empty = use every disk the command returns (backward compatible)
     "interval_seconds": int(os.environ.get("INTERVAL_SECONDS", "30")),
     "ipmi_timeout": int(os.environ.get("IPMI_TIMEOUT", "10")),
     "history_retention_days": int(os.environ.get("HISTORY_RETENTION_DAYS", "30")),
@@ -369,8 +374,14 @@ def ipmi_set_fan_percent(settings, percent):
 
 
 def read_disk_temps(settings):
-    """Read one or more disk temperatures over SSH. Returns a list of °C values
-    (empty list if not configured)."""
+    """Read one or more disk temperatures over SSH. Returns a list of
+    {"name": str, "reading": float} dicts (empty list if not configured).
+
+    Each output line is expected as "name:temp" (the default command emits
+    the block device name, e.g. "sda:32000"), but a bare number per line
+    (the old default command's format, for anyone with a saved custom
+    command from before disk selection existed) is also accepted — those
+    just get positional names like "disk1" instead of a real device name."""
     if not settings["disk_ssh_host"]:
         return []
     if not os.path.exists(SSH_KEY_PATH):
@@ -385,21 +396,29 @@ def read_disk_temps(settings):
     if out.returncode != 0 or not out.stdout.strip():
         raise RuntimeError(f"disk temp SSH command failed: {out.stderr.strip()}")
 
-    temps = []
+    disks = []
     for line in out.stdout.strip().splitlines():
         line = line.strip()
         if not line:
             continue
+        if ":" in line:
+            name, _, value = line.partition(":")
+            name = name.strip() or f"disk{len(disks) + 1}"
+            value = value.strip()
+        else:
+            name = f"disk{len(disks) + 1}"
+            value = line
         try:
-            raw = float(line)
+            raw = float(value)
         except ValueError:
             continue
         # drivetemp/hwmon reports millidegrees; normalize to Celsius if needed
-        temps.append(raw / 1000.0 if raw > 200 else raw)
+        reading = raw / 1000.0 if raw > 200 else raw
+        disks.append({"name": name, "reading": reading})
 
-    if not temps:
+    if not disks:
         raise RuntimeError(f"no parsable disk temps in output: {out.stdout!r}")
-    return temps
+    return disks
 
 
 def aggregate_temps(temps, mode):
@@ -410,6 +429,14 @@ def aggregate_temps(temps, mode):
     if mode == "min":
         return min(temps)
     return sum(temps) / len(temps)  # avg (default)
+
+
+def selected_disk_readings(disks, selected_names):
+    """Readings for the selected disks, or every disk if none are selected
+    (preserves old behavior for anyone upgrading with disk temps already set up)."""
+    if selected_names:
+        disks = [d for d in disks if d["name"] in selected_names]
+    return [d["reading"] for d in disks]
 
 
 # --------------------------------------------------------------------------
@@ -489,7 +516,8 @@ def control_loop():
             error = "No CPU sensors selected yet — pick some in Settings"
 
         try:
-            disk_temps = read_disk_temps(settings)
+            all_disks = read_disk_temps(settings)
+            disk_temps = selected_disk_readings(all_disks, settings["disk_names"])
             disk_temp = aggregate_temps(disk_temps, settings["disk_temp_aggregation"])
         except Exception as exc:
             error = (error + " | " if error else "") + f"Disk temp read failed: {exc}"
@@ -628,9 +656,9 @@ def api_test_disk():
     if not settings["disk_ssh_host"]:
         return jsonify({"ok": False, "message": "Fill in disk SSH host first"})
     try:
-        temps = read_disk_temps(settings)
-        formatted = ", ".join(f"{t:.1f}°C" for t in temps)
-        return jsonify({"ok": True, "message": f"{len(temps)} disk(s): {formatted}"})
+        disks = read_disk_temps(settings)
+        formatted = ", ".join(f"{d['name']}: {d['reading']:.1f}°C" for d in disks)
+        return jsonify({"ok": True, "message": f"{len(disks)} disk(s): {formatted}", "disks": disks})
     except Exception as exc:
         return jsonify({"ok": False, "message": str(exc)})
 

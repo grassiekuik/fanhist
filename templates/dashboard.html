@@ -100,7 +100,7 @@
         </select>
       </label>
     </div>
-    <label class="block">Command (must return one temperature per line, m°C or °C)
+    <label class="block">Command (one "name:temp" per line, m°C or °C — a bare number per line also works but won't have a real disk name)
       <textarea id="set_disk_temp_cmd" rows="3"></textarea>
     </label>
 
@@ -116,6 +116,7 @@
     </div>
     <button onclick="testDisk()">Test disk connection</button>
     <span id="diskTestResult" class="test-result"></span>
+    <div id="diskList" class="sensor-checklist"></div>
 
     <h3>General</h3>
     <div class="field-row">
@@ -346,6 +347,11 @@ async function loadSettings() {
   document.getElementById('set_ipmi_timeout').value = s.ipmi_timeout;
   document.getElementById('set_history_retention_days').value = s.history_retention_days;
 
+  selectedDiskNames = s.disk_names || [];
+  if (s.disk_ssh_host) {
+    testDisk(true); // quiet, one-shot — just populate the checklist
+  }
+
   if (s.idrac_host && s.idrac_pass === '__SET__') {
     testIdrac(true, false); // quiet, one-shot — just populate the checklist, no repeating poll
   } else {
@@ -357,6 +363,9 @@ async function saveSettings() {
   const cpu_sensor_names = Array.from(
     document.querySelectorAll('#cpuSensorList input[type=checkbox]:checked')
   ).map(cb => cb.value);
+  const disk_names = Array.from(
+    document.querySelectorAll('#diskList input[type=checkbox]:checked')
+  ).map(cb => cb.value);
 
   const payload = {
     idrac_host: document.getElementById('set_idrac_host').value.trim(),
@@ -365,6 +374,7 @@ async function saveSettings() {
     cpu_temp_aggregation: document.getElementById('set_cpu_temp_aggregation').value,
     disk_ssh_host: document.getElementById('set_disk_ssh_host').value.trim(),
     disk_ssh_user: document.getElementById('set_disk_ssh_user').value.trim(),
+    disk_names,
     disk_temp_aggregation: document.getElementById('set_disk_temp_aggregation').value,
     disk_temp_cmd: document.getElementById('set_disk_temp_cmd').value,
     interval_seconds: parseInt(document.getElementById('set_interval_seconds').value, 10),
@@ -485,18 +495,53 @@ async function testIdrac(silent, startWatch) {
   }
 }
 
-async function testDisk() {
+let diskSensors = [];
+let selectedDiskNames = [];
+
+function renderDiskChecklist() {
+  const container = document.getElementById('diskList');
+  if (diskSensors.length === 0) {
+    container.innerHTML = '';
+    return;
+  }
+  container.innerHTML = '';
+  diskSensors.forEach(d => {
+    const label = document.createElement('label');
+    label.className = 'sensor-check';
+    // nothing selected yet (fresh setup) defaults to "all" to match how
+    // disk temps behaved before per-disk selection existed
+    const checked = selectedDiskNames.length === 0 || selectedDiskNames.includes(d.name) ? 'checked' : '';
+    label.innerHTML = `<input type="checkbox" value="${d.name}" ${checked}>${d.name} — ${d.reading.toFixed(1)}°C`;
+    container.appendChild(label);
+  });
+}
+
+async function testDisk(silent) {
+  const currentlyChecked = Array.from(
+    document.querySelectorAll('#diskList input[type=checkbox]:checked')
+  ).map(cb => cb.value);
+  if (currentlyChecked.length) selectedDiskNames = currentlyChecked;
+
   const el = document.getElementById('diskTestResult');
-  el.textContent = 'Testing...';
-  el.className = 'test-result';
+  if (!silent) {
+    el.textContent = 'Testing...';
+    el.className = 'test-result';
+  }
   const r = await fetch('/api/test/disk', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(diskFormOverrides()),
   });
   const res = await r.json();
-  el.textContent = res.message;
-  el.className = 'test-result ' + (res.ok ? 'ok' : 'fail');
+  if (res.ok) {
+    diskSensors = res.disks || [];
+    renderDiskChecklist();
+    el.textContent = `Found ${diskSensors.length} disk(s), pick which to include below.`;
+    el.className = 'test-result ok';
+  } else if (!silent) {
+    el.textContent = res.message;
+    el.className = 'test-result fail';
+  }
 }
 
 async function loadSshKey() {
