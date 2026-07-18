@@ -1,7 +1,16 @@
 # fanhist
 
-A small, self-hosted iDRAC fan controller — inspired by [Hush](https://github.com/natankeddem/hush),
+**fanhist** is a small, self-hosted **Dell iDRAC fan controller** for silencing loud
+**PowerEdge server fan noise** — a common problem when a non-Dell (third-party) PCIe card,
+HBA, or GPU makes iDRAC's automatic thermal algorithm needlessly spin every fan at 100%.
+It sets a custom **temperature-to-fan-speed curve** over local **IPMI** (`ipmitool`, no
+Redfish/WS-Man needed), logs history to SQLite, and is configured entirely from a small
+web dashboard — no config files, no restarts. Inspired by [Hush](https://github.com/natankeddem/hush),
 but built simpler and with built-in history.
+
+**Tested on: Dell PowerEdge R720 with iDRAC 7.** See [Compatibility](#compatibility) below
+for what's expected to work on other Dell generations (R610–R940, iDRAC 6/7/8/9) and what
+won't (non-Dell BMCs like HPE iLO or Supermicro IPMI).
 
 ## ⚠️ Warning
 
@@ -18,6 +27,29 @@ temperature alert (e.g. in Home Assistant or Grafana) as an extra safety net.
 - Computes the fan percentage via a configurable curve (temperature → %)
 - Sets the fans via IPMI raw commands (`0x30 0x30 ...`)
 - Logs every reading to SQLite and shows a graph + curve editor on a small dashboard
+
+## Compatibility
+
+**Sensor reading** (`ipmitool sensor list`/`sensor reading`/`sdr elist`) is standard IPMI —
+it should work on any server with IPMI-over-LAN enabled, Dell or not. Sensor *names* vary by
+model, which is why fanhist discovers them live via "Test connection" instead of hardcoding
+any.
+
+**Setting the fans** is the part that's vendor- and generation-specific: it uses Dell's OEM
+raw IPMI commands (`0x30 0x30 0x01 ...` for manual/automatic mode, `0x30 0x30 0x02 ...` for
+fan speed). These are the same commands the homelab community has used for years to fix
+PowerEdge fan noise caused by non-Dell PCIe cards/HBAs/GPUs — but they're Dell-proprietary,
+undocumented, and not guaranteed to behave identically across every iDRAC firmware version.
+
+| Hardware | Expected to work? |
+|---|---|
+| Dell PowerEdge 10th–13th gen (iDRAC 6/7/8 — R610/R710/R715, R620/R720/R820, R630/R730/R830, etc.) | **Likely** — this is the well-established version of the trick, and what this project is actually tested against (R720 + iDRAC 7). |
+| Dell PowerEdge 14th gen+ (iDRAC 9 — R640/R740/R940, R650/R750, etc.) | **Uncertain** — community reports are mixed; some firmware versions restrict or change manual fan control behavior. Try it, but verify actual fan RPM changes (e.g. in iDRAC's own web UI) before trusting it unattended. |
+| Non-Dell servers (HPE iLO, Supermicro IPMI, Lenovo XCC, etc.) | **No** — the raw fan-control commands are Dell-specific. Sensor *reading* would still work over standard IPMI, but fan *control* would need different raw commands for that vendor. |
+
+If you're on untested hardware: follow the Warning above closely, and cross-check that a
+requested fan percentage actually changes real fan RPM (via the BMC's own web UI or
+`ipmitool sdr type fan`) before relying on it unsupervised.
 
 ## Quick start
 
@@ -42,10 +74,10 @@ whatever host/UI you deploy with (e.g. a stack manager that only takes a compose
    > (a GitHub PAT with `read:packages`) wherever your Docker host authenticates registries.
 
 3. Open `http://<host>:8181` for the dashboard.
-4. Scroll to "Settings" and fill in your iDRAC host, user, and password, then click
-   "Test connection" — this both verifies the connection and lists the available
+4. Click "Settings" in the top nav and fill in your iDRAC host, user, and password, then
+   click "Test connection" — this both verifies the connection and lists the available
    temperature sensors so you can check off the one(s) to use. Then click "Save settings".
-5. (Optional, for disk temperature) In the same panel, click "Generate key" (or
+5. (Optional, for disk temperature) In the same page, click "Generate key" (or
    "Regenerate key"). The public key appears immediately — paste it into `authorized_keys`
    on your NAS/host (or via the TrueNAS UI under Credentials → Users → SSH Public Key).
    Then fill in the SSH host/user, click "Test disk connection", and save.
@@ -55,8 +87,8 @@ database under `./data` — so they survive a container restart or rebuild.
 
 ## Settings
 
-Everything is configurable from the dashboard ("Settings" panel), no environment variables
-or restarts needed:
+Everything is configurable from the Settings page (linked in the top nav), no environment
+variables or restarts needed:
 
 - **iDRAC**: host/IP, user, password, and one or more temperature sensors (discovered
   via "Test connection" — pick multiple if you want, e.g. Inlet + Exhaust, and how
