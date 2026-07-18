@@ -62,6 +62,7 @@
 
   <div class="panel">
     <h2>Fan curve</h2>
+    <canvas id="curveChart" style="max-height: 220px"></canvas>
     <table id="curveTable"></table>
     <button onclick="addPoint()">+ Add point</button>
     <button onclick="saveCurve()">Save</button>
@@ -172,17 +173,54 @@ async function refreshHistory() {
   });
 }
 
+let curveChart;
+function renderCurveChart() {
+  const points = [...curve]
+    .sort((a, b) => a.temp - b.temp)
+    .map(p => ({ x: p.temp, y: p.percent }));
+  if (curveChart) curveChart.destroy();
+  const ctx = document.getElementById('curveChart').getContext('2d');
+  curveChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      datasets: [{
+        label: 'Fan %',
+        data: points,
+        borderColor: '#e8562f',
+        backgroundColor: '#e8562f',
+        tension: 0,
+        pointRadius: 5,
+        pointHoverRadius: 7,
+      }],
+    },
+    options: {
+      parsing: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { type: 'linear', title: { display: true, text: 'Temp (°C)' }, min: 0 },
+        y: { title: { display: true, text: 'Fan %' }, min: 0, max: 100 },
+      },
+    },
+  });
+}
+
+function updatePoint(i, field, value) {
+  curve[i][field] = parseFloat(value);
+  renderCurveChart();
+}
+
 function renderCurveTable() {
   const table = document.getElementById('curveTable');
   table.innerHTML = '<tr><th>Temp (°C)</th><th>Fan (%)</th><th></th></tr>';
   curve.forEach((p, i) => {
     const row = document.createElement('tr');
     row.innerHTML = `
-      <td><input type="number" value="${p.temp}" onchange="curve[${i}].temp = parseFloat(this.value)"></td>
-      <td><input type="number" value="${p.percent}" onchange="curve[${i}].percent = parseFloat(this.value)"></td>
+      <td><input type="number" value="${p.temp}" onchange="updatePoint(${i}, 'temp', this.value)"></td>
+      <td><input type="number" value="${p.percent}" onchange="updatePoint(${i}, 'percent', this.value)"></td>
       <td><button onclick="removePoint(${i})">x</button></td>`;
     table.appendChild(row);
   });
+  renderCurveChart();
 }
 
 function addPoint() {
@@ -212,13 +250,17 @@ async function loadCurve() {
 let cpuSensors = [];
 let selectedCpuSensors = [];
 
-const SENSOR_CATEGORY_ORDER = ['Inlet / Ambient', 'Exhaust', 'CPU', 'Other'];
+const SENSOR_CATEGORY_ORDER = ['CPU', 'PCI', 'Drive', 'GPU', 'Chassis', 'Inlet / Ambient', 'Exhaust', 'Other'];
 
 function sensorCategory(name) {
   const n = name.toLowerCase();
+  if (n.includes('cpu') || n.includes('proc')) return 'CPU';
+  if (n.includes('pci')) return 'PCI';
+  if (n.includes('drive') || n.includes('disk') || n.includes('hdd') || n.includes('ssd')) return 'Drive';
+  if (n.includes('gpu')) return 'GPU';
+  if (n.includes('chassis') || n.includes('board') || n.includes('system') || n.includes('planar')) return 'Chassis';
   if (n.includes('inlet') || n.includes('ambient')) return 'Inlet / Ambient';
   if (n.includes('exhaust')) return 'Exhaust';
-  if (n.includes('cpu')) return 'CPU';
   return 'Other';
 }
 
@@ -343,7 +385,9 @@ function diskFormOverrides() {
   };
 }
 
-async function testIdrac() {
+let cpuSensorRefreshTimer = null;
+
+async function testIdrac(silent) {
   // preserve whatever's currently checked before re-rendering
   const currentlyChecked = Array.from(
     document.querySelectorAll('#cpuSensorList input[type=checkbox]:checked')
@@ -351,8 +395,10 @@ async function testIdrac() {
   if (currentlyChecked.length) selectedCpuSensors = currentlyChecked;
 
   const el = document.getElementById('idracTestResult');
-  el.textContent = 'Testing connection...';
-  el.className = 'test-result';
+  if (!silent) {
+    el.textContent = 'Testing connection...';
+    el.className = 'test-result';
+  }
   const r = await fetch('/api/sensors/idrac', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -362,9 +408,13 @@ async function testIdrac() {
   if (res.ok) {
     cpuSensors = res.sensors;
     renderCpuSensorChecklist();
-    el.textContent = `Connected — found ${res.sensors.length} temperature sensor(s), pick which to use below`;
+    el.textContent = `Connected — found ${res.sensors.length} temperature sensor(s). Readings refresh every 5s — `
+      + `touch/stress a component and watch which one moves to identify unnamed sensors.`;
     el.className = 'test-result ok';
-  } else {
+    if (!cpuSensorRefreshTimer) {
+      cpuSensorRefreshTimer = setInterval(() => testIdrac(true), 5000);
+    }
+  } else if (!silent) {
     el.textContent = res.message;
     el.className = 'test-result fail';
   }
