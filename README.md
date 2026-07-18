@@ -89,11 +89,11 @@ database under `./data` — so they survive a container restart or rebuild.
 
 `ghcr.io/grassiekuik/fanhist:latest` always tracks the tip of `main` — convenient, but it
 means a bad change can reach you immediately. Tagged releases are also published (e.g.
-`ghcr.io/grassiekuik/fanhist:v1.0.0`, see the [tags](https://github.com/grassiekuik/fanhist/tags)
+`ghcr.io/grassiekuik/fanhist:1.0.0`, see the [tags](https://github.com/grassiekuik/fanhist/tags)
 page) if you'd rather pin to a known-good version and upgrade deliberately:
 
 ```yaml
-image: ghcr.io/grassiekuik/fanhist:v1.0.0   # instead of :latest
+image: ghcr.io/grassiekuik/fanhist:1.0.0   # instead of :latest
 ```
 
 Also useful for checking exactly what's running: every image has the git commit baked in
