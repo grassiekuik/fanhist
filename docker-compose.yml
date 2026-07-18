@@ -8,18 +8,5 @@ services:
     restart: unless-stopped
     ports:
       - "8181:8081"
-    environment:
-      - IDRAC_HOST=192.168.50.11
-      - IDRAC_USER=root
-      - IDRAC_PASS=changeme
-      - CPU_SENSOR_NAME=Inlet Temp
-      - DISK_SSH_HOST=192.168.50.130    # TrueNAS VM IP, leeg laten om uit te schakelen
-      - DISK_SSH_USER=root
-      - DISK_SSH_KEY=/config/ssh/id_ed25519
-      - DISK_TEMP_AGGREGATION=avg          # avg (default), max, of min
-      - INTERVAL_SECONDS=30
-      - IPMI_TIMEOUT=10
-      - HISTORY_RETENTION_DAYS=30
     volumes:
       - ./data:/data
-      - ./ssh:/config/ssh:ro

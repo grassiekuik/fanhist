@@ -22,33 +22,37 @@ externe temperatuur-alert (bijv. in Home Assistant of Grafana) als extra vangnet
 ## Snel starten
 
 1. Zorg dat IPMI over LAN aanstaat op je iDRAC (iDRAC Settings → Network → IPMI Settings).
-2. Kopieer je SSH-key (voor disktemp-uitlezing) naar `./ssh/id_ed25519` in dit project,
-   of laat `DISK_SSH_HOST` leeg als je geen disktemp wilt meenemen.
-3. Pas de environment-variabelen in `docker-compose.yml` aan naar jouw omgeving.
-4. Start:
+2. Start:
 
    ```bash
    docker compose up -d --build
    ```
 
-5. Open `http://<host>:8181` voor het dashboard.
+3. Open `http://<host>:8181` voor het dashboard.
+4. Scroll naar "Instellingen" en vul je iDRAC-host, gebruiker, wachtwoord en sensornaam in,
+   klik "Verbinding testen" om te checken of het werkt, en klik daarna "Instellingen opslaan".
+5. (Optioneel, voor disktemperatuur) Klik in hetzelfde paneel op "Sleutel (opnieuw) genereren".
+   De publieke sleutel verschijnt meteen — plak die in `authorized_keys` van je NAS/host (of via
+   de TrueNAS UI onder Credentials → Users → SSH Public Key). Vul daarna de SSH-host/gebruiker
+   in, klik "Diskverbinding testen", en sla op.
 
-## Configuratie (environment variabelen)
+Alle instellingen (inclusief de iDRAC-gegevens en de SSH-sleutel) worden bewaard in de SQLite-
+database onder `./data` — dus ze overleven een herstart of rebuild van de container.
 
-| Variabele | Standaard | Omschrijving |
-|---|---|---|
-| `IDRAC_HOST` | `192.168.50.11` | IP van de iDRAC |
-| `IDRAC_USER` | `root` | iDRAC-gebruiker |
-| `IDRAC_PASS` | — | iDRAC-wachtwoord |
-| `CPU_SENSOR_NAME` | `Inlet Temp` | Naam van de IPMI-sensor (`ipmitool sensor list` voor opties) |
-| `DISK_SSH_HOST` | — | IP voor disktemp over SSH; leeg = uitgeschakeld |
-| `DISK_SSH_USER` | `root` | SSH-gebruiker |
-| `DISK_SSH_KEY` | `/config/ssh/id_ed25519` | Pad naar SSH-key in de container |
-| `DISK_TEMP_CMD` | zoekt automatisch alle `drivetemp`-hwmons | Commando dat één temperatuur per regel teruggeeft (m°C of °C). Meerdere regels = meerdere disks. |
-| `DISK_TEMP_AGGREGATION` | `avg` | Hoe meerdere disktemps gecombineerd worden: `avg`, `max`, of `min` |
-| `INTERVAL_SECONDS` | `30` | Hoe vaak gemeten en bijgestuurd wordt |
-| `IPMI_TIMEOUT` | `10` | Timeout per IPMI/SSH-call in seconden |
-| `HISTORY_RETENTION_DAYS` | `30` | Hoe lang metingen bewaard blijven |
+## Instellingen
+
+Alles is te configureren vanuit het dashboard (paneel "Instellingen"), geen environment-
+variabelen of herstart nodig:
+
+- **iDRAC**: host/IP, gebruiker, wachtwoord, sensornaam (`ipmitool sensor list` voor opties)
+- **Disktemperatuur (optioneel)**: SSH-host, SSH-gebruiker, hoe meerdere disks gecombineerd
+  worden (gemiddelde/max/min), en het commando dat de temperaturen uitleest. De SSH-sleutel
+  wordt in de container gegenereerd via de knop "Sleutel (opnieuw) genereren" — er hoeft dus
+  niets handmatig gekopieerd te worden naar de container zelf.
+- **Algemeen**: meetinterval, IPMI-timeout, hoe lang geschiedenis bewaard blijft
+
+Alleen `DB_PATH` (waar de SQLite-database staat) is nog een environment-variabele, voor als je
+die ergens anders wilt zetten dan het standaard `/data/fanhist.db`.
 
 ## Curve aanpassen
 

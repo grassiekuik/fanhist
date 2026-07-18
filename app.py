@@ -6,6 +6,7 @@ Inspired by Hush (natankeddem/hush), but purpose-built and simpler:
 - Optionally reads a disk temperature over SSH (e.g. TrueNAS drivetemp/hwmon)
 - Applies a user-configurable temperature -> fan% curve via IPMI raw commands
 - Logs every reading to SQLite and shows history on a small dashboard
+- Everything (iDRAC creds, disk SSH host, SSH key) is configured from the web UI
 """
 
 import json
@@ -21,34 +22,46 @@ from datetime import datetime, timedelta
 from flask import Flask, jsonify, render_template, request
 
 # --------------------------------------------------------------------------
-# Configuration (all overridable via environment variables / docker-compose)
+# Configuration
 # --------------------------------------------------------------------------
+# DB_PATH is the only thing still set via env var (it's a deployment/storage
+# concern, not something you'd want to change from the UI). Everything else
+# lives in the "settings" row in SQLite and is edited from the dashboard.
+# Env vars below are only used to *seed* that row the very first time the
+# app runs, so upgraders with an existing docker-compose.yml keep working.
 
-IDRAC_HOST = os.environ.get("IDRAC_HOST", "192.168.50.11")
-IDRAC_USER = os.environ.get("IDRAC_USER", "root")
-IDRAC_PASS = os.environ.get("IDRAC_PASS", "")
+DB_PATH = os.environ.get("DB_PATH", "/data/fanhist.db")
 
-CPU_SENSOR_NAME = os.environ.get("CPU_SENSOR_NAME", "Inlet Temp")
+SSH_KEY_DIR = os.path.join(os.path.dirname(DB_PATH), "ssh")
+SSH_KEY_PATH = os.path.join(SSH_KEY_DIR, "id_ed25519")
 
-DISK_SSH_HOST = os.environ.get("DISK_SSH_HOST", "")  # e.g. TrueNAS IP; leave empty to disable
-DISK_SSH_USER = os.environ.get("DISK_SSH_USER", "root")
-DISK_SSH_KEY = os.environ.get("DISK_SSH_KEY", "/config/ssh/id_ed25519")
-# Command run over SSH that must print ONE temperature per line (Celsius or milli-Celsius).
-# Multiple lines = multiple disks; they are averaged. Default reads every drivetemp
-# hwmon sensor it can find (i.e. every disk exposed via the drivetemp kernel module).
-DISK_TEMP_CMD = os.environ.get(
-    "DISK_TEMP_CMD",
+DEFAULT_DISK_TEMP_CMD = (
     "for f in /sys/class/hwmon/hwmon*/name; do "
     "  grep -qx drivetemp \"$f\" 2>/dev/null && cat \"$(dirname \"$f\")\"/temp1_input; "
-    "done",
+    "done"
 )
-# How to combine multiple disk readings: "avg" (default), "max", or "min"
-DISK_TEMP_AGGREGATION = os.environ.get("DISK_TEMP_AGGREGATION", "avg")
 
-INTERVAL_SECONDS = int(os.environ.get("INTERVAL_SECONDS", "30"))
-IPMI_TIMEOUT = int(os.environ.get("IPMI_TIMEOUT", "10"))
-DB_PATH = os.environ.get("DB_PATH", "/data/fanhist.db")
-HISTORY_RETENTION_DAYS = int(os.environ.get("HISTORY_RETENTION_DAYS", "30"))
+SETTINGS_DEFAULTS = {
+    "idrac_host": os.environ.get("IDRAC_HOST", ""),
+    "idrac_user": os.environ.get("IDRAC_USER", "root"),
+    "idrac_pass": os.environ.get("IDRAC_PASS", ""),
+    "cpu_sensor_name": os.environ.get("CPU_SENSOR_NAME", "Inlet Temp"),
+    "disk_ssh_host": os.environ.get("DISK_SSH_HOST", ""),
+    "disk_ssh_user": os.environ.get("DISK_SSH_USER", "root"),
+    "disk_temp_cmd": os.environ.get("DISK_TEMP_CMD", DEFAULT_DISK_TEMP_CMD),
+    "disk_temp_aggregation": os.environ.get("DISK_TEMP_AGGREGATION", "avg"),
+    "interval_seconds": int(os.environ.get("INTERVAL_SECONDS", "30")),
+    "ipmi_timeout": int(os.environ.get("IPMI_TIMEOUT", "10")),
+    "history_retention_days": int(os.environ.get("HISTORY_RETENTION_DAYS", "30")),
+}
+
+SETTINGS_FIELD_TYPES = {
+    "interval_seconds": int,
+    "ipmi_timeout": int,
+    "history_retention_days": int,
+}
+
+SECRET_FIELDS = {"idrac_pass"}
 
 DEFAULT_CURVE = [
     {"temp": 35, "percent": 5},
@@ -107,8 +120,8 @@ def db_log_reading(cpu_temp, disk_temp, effective_temp, fan_percent):
         conn.commit()
 
 
-def db_prune_old():
-    cutoff = (datetime.utcnow() - timedelta(days=HISTORY_RETENTION_DAYS)).isoformat()
+def db_prune_old(retention_days):
+    cutoff = (datetime.utcnow() - timedelta(days=retention_days)).isoformat()
     with closing(sqlite3.connect(DB_PATH)) as conn:
         conn.execute("DELETE FROM readings WHERE ts < ?", (cutoff,))
         conn.commit()
@@ -152,21 +165,52 @@ def db_set_curve(curve):
         conn.commit()
 
 
+def db_get_settings():
+    with closing(sqlite3.connect(DB_PATH)) as conn:
+        row = conn.execute("SELECT value FROM config WHERE key = 'settings'").fetchone()
+    settings = dict(SETTINGS_DEFAULTS)
+    if row:
+        settings.update(json.loads(row[0]))
+    return settings
+
+
+def db_set_settings(partial):
+    settings = db_get_settings()
+    settings.update(partial)
+    with closing(sqlite3.connect(DB_PATH)) as conn:
+        conn.execute(
+            "INSERT INTO config (key, value) VALUES ('settings', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (json.dumps(settings),),
+        )
+        conn.commit()
+    return settings
+
+
+def settings_public(settings):
+    """Settings dict safe to send to the browser: secrets are replaced with a
+    sentinel so the UI can show 'configured' without ever echoing the value back."""
+    out = dict(settings)
+    for key in SECRET_FIELDS:
+        out[key] = "__SET__" if out.get(key) else ""
+    return out
+
+
 # --------------------------------------------------------------------------
 # IPMI helpers
 # --------------------------------------------------------------------------
 
-def _ipmi_base_cmd():
+def _ipmi_base_cmd(settings):
     return [
         "ipmitool", "-I", "lanplus",
-        "-H", IDRAC_HOST, "-U", IDRAC_USER, "-P", IDRAC_PASS,
+        "-H", settings["idrac_host"], "-U", settings["idrac_user"], "-P", settings["idrac_pass"],
     ]
 
 
-def ipmi_read_cpu_temp():
+def ipmi_read_cpu_temp(settings):
     """Read a named sensor via ipmitool. Raises on failure/timeout."""
-    cmd = _ipmi_base_cmd() + ["sensor", "reading", CPU_SENSOR_NAME]
-    out = subprocess.run(cmd, capture_output=True, text=True, timeout=IPMI_TIMEOUT)
+    cmd = _ipmi_base_cmd(settings) + ["sensor", "reading", settings["cpu_sensor_name"]]
+    out = subprocess.run(cmd, capture_output=True, text=True, timeout=settings["ipmi_timeout"])
     if out.returncode != 0:
         raise RuntimeError(f"ipmitool sensor reading failed: {out.stderr.strip()}")
     match = re.search(r"[-+]?\d+(\.\d+)?", out.stdout)
@@ -175,28 +219,32 @@ def ipmi_read_cpu_temp():
     return float(match.group())
 
 
-def ipmi_set_manual_mode():
-    cmd = _ipmi_base_cmd() + ["raw", "0x30", "0x30", "0x01", "0x00"]
-    subprocess.run(cmd, capture_output=True, text=True, timeout=IPMI_TIMEOUT, check=True)
+def ipmi_set_manual_mode(settings):
+    cmd = _ipmi_base_cmd(settings) + ["raw", "0x30", "0x30", "0x01", "0x00"]
+    subprocess.run(cmd, capture_output=True, text=True, timeout=settings["ipmi_timeout"], check=True)
 
 
-def ipmi_set_fan_percent(percent):
+def ipmi_set_fan_percent(settings, percent):
     percent = max(0, min(100, int(round(percent))))
     hex_val = f"0x{percent:02x}"
-    cmd = _ipmi_base_cmd() + ["raw", "0x30", "0x30", "0x02", "0xff", hex_val]
-    subprocess.run(cmd, capture_output=True, text=True, timeout=IPMI_TIMEOUT, check=True)
+    cmd = _ipmi_base_cmd(settings) + ["raw", "0x30", "0x30", "0x02", "0xff", hex_val]
+    subprocess.run(cmd, capture_output=True, text=True, timeout=settings["ipmi_timeout"], check=True)
 
 
-def read_disk_temps():
+def read_disk_temps(settings):
     """Read one or more disk temperatures over SSH. Returns a list of °C values
-    (empty list if not configured/failed)."""
-    if not DISK_SSH_HOST:
+    (empty list if not configured)."""
+    if not settings["disk_ssh_host"]:
         return []
+    if not os.path.exists(SSH_KEY_PATH):
+        raise RuntimeError("No SSH key yet — generate one in Settings and add it to your NAS")
+
     cmd = [
         "ssh", "-o", "ConnectTimeout=8", "-o", "StrictHostKeyChecking=no",
-        "-i", DISK_SSH_KEY, f"{DISK_SSH_USER}@{DISK_SSH_HOST}", DISK_TEMP_CMD,
+        "-i", SSH_KEY_PATH, f"{settings['disk_ssh_user']}@{settings['disk_ssh_host']}",
+        settings["disk_temp_cmd"],
     ]
-    out = subprocess.run(cmd, capture_output=True, text=True, timeout=IPMI_TIMEOUT)
+    out = subprocess.run(cmd, capture_output=True, text=True, timeout=settings["ipmi_timeout"])
     if out.returncode != 0 or not out.stdout.strip():
         raise RuntimeError(f"disk temp SSH command failed: {out.stderr.strip()}")
 
@@ -217,14 +265,40 @@ def read_disk_temps():
     return temps
 
 
-def aggregate_disk_temp(temps):
+def aggregate_disk_temp(temps, settings):
     if not temps:
         return None
-    if DISK_TEMP_AGGREGATION == "max":
+    aggregation = settings["disk_temp_aggregation"]
+    if aggregation == "max":
         return max(temps)
-    if DISK_TEMP_AGGREGATION == "min":
+    if aggregation == "min":
         return min(temps)
     return sum(temps) / len(temps)  # avg (default)
+
+
+# --------------------------------------------------------------------------
+# SSH key management (for disk temp reads)
+# --------------------------------------------------------------------------
+
+def ssh_key_public_text():
+    pub_path = SSH_KEY_PATH + ".pub"
+    if not os.path.exists(pub_path):
+        return None
+    with open(pub_path) as f:
+        return f.read().strip()
+
+
+def ssh_key_generate():
+    os.makedirs(SSH_KEY_DIR, exist_ok=True)
+    for path in (SSH_KEY_PATH, SSH_KEY_PATH + ".pub"):
+        if os.path.exists(path):
+            os.remove(path)
+    subprocess.run(
+        ["ssh-keygen", "-t", "ed25519", "-f", SSH_KEY_PATH, "-N", "", "-C", "fanhist"],
+        capture_output=True, text=True, timeout=10, check=True,
+    )
+    os.chmod(SSH_KEY_PATH, 0o600)
+    return ssh_key_public_text()
 
 
 # --------------------------------------------------------------------------
@@ -252,20 +326,47 @@ def curve_percent_for_temp(curve, temp):
 # --------------------------------------------------------------------------
 
 def control_loop():
-    ipmi_set_manual_mode()
+    manual_mode_key = None  # (host, user, pass) that manual mode was last set for
+
     while True:
+        settings = db_get_settings()
+        interval = settings["interval_seconds"] or 30
+
+        if not settings["idrac_host"] or not settings["idrac_pass"]:
+            with _lock:
+                _state.update(
+                    last_error="iDRAC not configured yet — fill in Settings",
+                    last_update=datetime.utcnow().isoformat(),
+                )
+            time.sleep(interval)
+            continue
+
+        idrac_key = (settings["idrac_host"], settings["idrac_user"], settings["idrac_pass"])
+        if idrac_key != manual_mode_key:
+            try:
+                ipmi_set_manual_mode(settings)
+                manual_mode_key = idrac_key
+            except Exception as exc:
+                with _lock:
+                    _state.update(
+                        last_error=f"Failed to set manual fan mode: {exc}",
+                        last_update=datetime.utcnow().isoformat(),
+                    )
+                time.sleep(interval)
+                continue
+
         cpu_temp = None
         disk_temps = []
         disk_temp = None
         error = None
         try:
-            cpu_temp = ipmi_read_cpu_temp()
+            cpu_temp = ipmi_read_cpu_temp(settings)
         except Exception as exc:
             error = f"CPU temp read failed: {exc}"
 
         try:
-            disk_temps = read_disk_temps()
-            disk_temp = aggregate_disk_temp(disk_temps)
+            disk_temps = read_disk_temps(settings)
+            disk_temp = aggregate_disk_temp(disk_temps, settings)
         except Exception as exc:
             error = (error + " | " if error else "") + f"Disk temp read failed: {exc}"
 
@@ -277,7 +378,7 @@ def control_loop():
             curve = db_get_curve()
             fan_percent = curve_percent_for_temp(curve, effective_temp)
             try:
-                ipmi_set_fan_percent(fan_percent)
+                ipmi_set_fan_percent(settings, fan_percent)
             except Exception as exc:
                 error = (error + " | " if error else "") + f"Fan set failed: {exc}"
 
@@ -295,9 +396,9 @@ def control_loop():
 
         if effective_temp is not None:
             db_log_reading(cpu_temp, disk_temp, effective_temp, fan_percent)
-        db_prune_old()
+        db_prune_old(settings["history_retention_days"])
 
-        time.sleep(INTERVAL_SECONDS)
+        time.sleep(interval)
 
 
 # --------------------------------------------------------------------------
@@ -330,6 +431,72 @@ def api_curve():
         db_set_curve(curve)
         return jsonify({"ok": True})
     return jsonify(db_get_curve())
+
+
+@app.route("/api/settings", methods=["GET", "POST"])
+def api_settings():
+    if request.method == "POST":
+        body = request.get_json()
+        if not isinstance(body, dict):
+            return jsonify({"error": "settings must be an object"}), 400
+
+        partial = {}
+        for key, value in body.items():
+            if key not in SETTINGS_DEFAULTS:
+                continue
+            if key in SECRET_FIELDS and value in ("", None, "__SET__"):
+                continue  # blank/unset means "leave existing secret untouched"
+            if key in SETTINGS_FIELD_TYPES:
+                try:
+                    value = SETTINGS_FIELD_TYPES[key](value)
+                except (TypeError, ValueError):
+                    return jsonify({"error": f"invalid value for {key}"}), 400
+            partial[key] = value
+
+        settings = db_set_settings(partial)
+        return jsonify(settings_public(settings))
+
+    return jsonify(settings_public(db_get_settings()))
+
+
+@app.route("/api/ssh-key", methods=["GET"])
+def api_ssh_key():
+    pub = ssh_key_public_text()
+    return jsonify({"exists": pub is not None, "public_key": pub})
+
+
+@app.route("/api/ssh-key/generate", methods=["POST"])
+def api_ssh_key_generate():
+    try:
+        pub = ssh_key_generate()
+    except subprocess.CalledProcessError as exc:
+        return jsonify({"error": f"key generation failed: {exc.stderr}"}), 500
+    return jsonify({"public_key": pub})
+
+
+@app.route("/api/test/idrac", methods=["POST"])
+def api_test_idrac():
+    settings = db_get_settings()
+    if not settings["idrac_host"] or not settings["idrac_pass"]:
+        return jsonify({"ok": False, "message": "Fill in iDRAC host and password first"})
+    try:
+        temp = ipmi_read_cpu_temp(settings)
+        return jsonify({"ok": True, "message": f"{settings['cpu_sensor_name']}: {temp:.1f}°C"})
+    except Exception as exc:
+        return jsonify({"ok": False, "message": str(exc)})
+
+
+@app.route("/api/test/disk", methods=["POST"])
+def api_test_disk():
+    settings = db_get_settings()
+    if not settings["disk_ssh_host"]:
+        return jsonify({"ok": False, "message": "Fill in disk SSH host first"})
+    try:
+        temps = read_disk_temps(settings)
+        formatted = ", ".join(f"{t:.1f}°C" for t in temps)
+        return jsonify({"ok": True, "message": f"{len(temps)} disk(s): {formatted}"})
+    except Exception as exc:
+        return jsonify({"ok": False, "message": str(exc)})
 
 
 if __name__ == "__main__":
