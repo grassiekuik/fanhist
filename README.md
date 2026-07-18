@@ -85,6 +85,22 @@ whatever host/UI you deploy with (e.g. a stack manager that only takes a compose
 All settings (including the iDRAC credentials and the SSH key) are stored in the SQLite
 database under `./data` — so they survive a container restart or rebuild.
 
+## Versioning
+
+`ghcr.io/grassiekuik/fanhist:latest` always tracks the tip of `main` — convenient, but it
+means a bad change can reach you immediately. Tagged releases are also published (e.g.
+`ghcr.io/grassiekuik/fanhist:v1.0.0`, see the [tags](https://github.com/grassiekuik/fanhist/tags)
+page) if you'd rather pin to a known-good version and upgrade deliberately:
+
+```yaml
+image: ghcr.io/grassiekuik/fanhist:v1.0.0   # instead of :latest
+```
+
+Also useful for checking exactly what's running: every image has the git commit baked in
+via the `GIT_SHA` build arg, shown in the dashboard footer (`build: abc1234`) and at
+`/api/version` — compare that against [the commit history](https://github.com/grassiekuik/fanhist/commits/main)
+if you're ever unsure whether a redeploy actually picked up a new image.
+
 ## Settings
 
 Everything is configurable from the Settings page (linked in the top nav), no environment
